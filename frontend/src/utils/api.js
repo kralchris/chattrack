@@ -1,3 +1,5 @@
+import { getOfflineCandles } from './offline.js';
+
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 const withQuery = (url, params) => {
@@ -10,11 +12,20 @@ const withQuery = (url, params) => {
 };
 
 export async function getCandles({ symbol, interval = '1m', start, end, aggregate }) {
-  const response = await fetch(withQuery(`${API_BASE}/api/candles`, { symbol, interval, start, end, aggregate }));
-  if (!response.ok) {
-    throw new Error(`Failed to load candles: ${response.statusText}`);
+  try {
+    const response = await fetch(withQuery(`${API_BASE}/api/candles`, { symbol, interval, start, end, aggregate }));
+    if (!response.ok) {
+      throw new Error(`Failed to load candles: ${response.statusText}`);
+    }
+    return response.json();
+  } catch (error) {
+    console.warn('Primary candle API failed, falling back to offline data', error);
+    const offline = getOfflineCandles({ symbol, interval, start, end, aggregate });
+    if (offline) {
+      return offline;
+    }
+    throw error;
   }
-  return response.json();
 }
 
 export async function postMetrics({ equity, rf_rate_annual, tradesCount }) {

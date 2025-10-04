@@ -2,7 +2,11 @@ import { create } from 'zustand';
 
 export const useChatStore = create((set, get) => ({
   messages: [
-    { role: 'system', content: 'Welcome to ChatTrack. Ask me to allocate capital, trade symbols, or set a date range.' }
+    { role: 'system', content: 'Welcome to ChatTrack. Ask me to allocate capital, trade symbols, or set a date range.' },
+    {
+      role: 'assistant',
+      content: 'Try typing instructions like "Start with 100k" or "Buy 10 SPY" below to kick off a backtest.'
+    }
   ],
   actions: [],
   capital: 100000,

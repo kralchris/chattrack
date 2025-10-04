@@ -6,11 +6,39 @@ import AllocRibbon from './components/AllocRibbon.jsx';
 import { useChatStore } from './store.js';
 import { parseMessage } from './utils/parser.js';
 import { getCandles, postMetrics } from './utils/api.js';
+import { computePerformanceMetrics } from './utils/metrics.js';
 
 const DEFAULT_SYMBOL = 'SPY';
 const DEFAULT_INTERVAL = '1m';
 
 const isoString = (date) => date.toISOString();
+
+const formatHorizon = (amount, unit) => {
+  const base = unit.toLowerCase().replace(/s$/, '');
+  return `${amount} ${base}${amount > 1 ? 's' : ''}`;
+};
+
+const computeRelativeRange = (amount, unit) => {
+  const end = new Date();
+  const start = new Date(end);
+  const normalized = unit.toLowerCase();
+  if (normalized.startsWith('day')) {
+    start.setUTCDate(start.getUTCDate() - amount);
+  } else if (normalized.startsWith('week')) {
+    start.setUTCDate(start.getUTCDate() - amount * 7);
+  } else if (normalized.startsWith('month')) {
+    start.setUTCMonth(start.getUTCMonth() - amount);
+  } else if (normalized.startsWith('year')) {
+    start.setUTCFullYear(start.getUTCFullYear() - amount);
+  }
+  return { start: isoString(start), end: isoString(end), interval: DEFAULT_INTERVAL };
+};
+
+const extractRelativeRange = (text) => {
+  const match = text.toLowerCase().match(/past\s+(\d+)?\s*(day|days|week|weeks|month|months|year|years)/);
+  if (!match) return null;
+  return { amount: Number(match[1] || 1), unit: match[2] };
+};
 
 export default function App() {
   const workerRef = useRef(null);
@@ -35,7 +63,8 @@ export default function App() {
     activeSymbol,
     setActiveSymbol,
     comparingBenchmark,
-    toggleBenchmark
+    toggleBenchmark,
+    offline
   } = useChatStore();
 
   const candlesBySymbol = useMemo(() => {
@@ -57,11 +86,15 @@ export default function App() {
       setTradesCount(tradesCount);
       setNotes(workerNotes);
       if (equitySeries?.length) {
+        let metrics = null;
         try {
-          const metrics = await postMetrics({ equity: equitySeries, tradesCount });
-          setMetrics(metrics);
+          metrics = await postMetrics({ equity: equitySeries, tradesCount });
         } catch (error) {
-          console.error('Metrics error', error);
+          console.warn('Metrics API unavailable, computing locally', error);
+          metrics = computePerformanceMetrics(equitySeries, { tradesCount });
+        }
+        if (metrics) {
+          setMetrics(metrics);
         }
       }
     };
@@ -92,11 +125,18 @@ export default function App() {
 
   const loadSymbol = async (symbol, range = dateRange || {}) => {
     setIsLoading(true);
+    const wasOffline = offline;
     try {
       const response = await getCandles({ symbol, interval: range.interval || DEFAULT_INTERVAL, start: range.start, end: range.end });
       setCandles(symbol, response);
-      setOffline(response.offline);
+      setOffline(Boolean(response.offline));
       setActiveSymbol(symbol);
+      if (response.offline && !wasOffline) {
+        addMessage({
+          role: 'assistant',
+          content: `Loaded ${symbol.toUpperCase()} using built-in sample data. Start the FastAPI backend for live market candles.`
+        });
+      }
       if (symbol === DEFAULT_SYMBOL) {
         const base = buildBenchmarkSeries(response.candles, capital);
         setBenchmark(base);
@@ -117,12 +157,32 @@ export default function App() {
   const handleSend = async (text) => {
     addMessage({ role: 'user', content: text });
     const action = parseMessage(text);
+    const relativeInstruction = extractRelativeRange(text);
+    let relativeHandled = false;
+
+    if (relativeInstruction && action.type !== 'set_dates') {
+      const { amount, unit } = relativeInstruction;
+      const range = computeRelativeRange(amount, unit);
+      setDateRange(range);
+      await loadSymbol(activeSymbol, range);
+      addMessage({ role: 'assistant', content: `Backtesting the last ${formatHorizon(amount, unit)} for ${activeSymbol}.` });
+      relativeHandled = true;
+    }
 
     switch (action.type) {
       case 'set_capital': {
         const value = action.payload.value || 0;
         setCapital(value);
         addMessage({ role: 'assistant', content: `Starting capital set to $${value.toLocaleString()}.` });
+        break;
+      }
+      case 'set_dates_relative': {
+        if (relativeHandled) break;
+        const { amount, unit } = action.payload;
+        const range = computeRelativeRange(amount, unit);
+        setDateRange(range);
+        await loadSymbol(activeSymbol, range);
+        addMessage({ role: 'assistant', content: `Backtesting the last ${formatHorizon(amount, unit)} for ${activeSymbol}.` });
         break;
       }
       case 'set_dates': {
@@ -209,6 +269,12 @@ function describeAction(action) {
     case 'allocate':
       return `Targeting ${(action.payload.weight * 100).toFixed(0)}% allocation to ${action.payload.symbol}.`;
     case 'schedule':
+      if (action.payload.notional) {
+        const amount = Number(action.payload.notional).toLocaleString();
+        return `Scheduled ${action.payload.action} $${amount} for ${action.payload.symbol ?? 'portfolio'} ${
+          action.payload.cadence
+        }.`;
+      }
       return `Scheduled ${action.payload.action} for ${action.payload.symbol ?? 'portfolio'} ${action.payload.cadence}.`;
     case 'rule':
       return `Applying rule: ${JSON.stringify(action.payload)}.`;

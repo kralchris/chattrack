@@ -31,6 +31,9 @@ const executeAction = (action, context, timestamp) => {
       const price = priceLookup(symbol, timestamp);
       if (!price) return;
       let qty = action.payload.qty;
+      if ((!qty || qty <= 0) && action.payload.notional) {
+        qty = action.payload.notional / price;
+      }
       if (action.payload.all) {
         const equity = context.equity();
         qty = equity > 0 ? (equity * 0.99) / price : 0;
@@ -64,6 +67,10 @@ const executeAction = (action, context, timestamp) => {
     case 'allocate': {
       const symbol = action.payload.symbol;
       targetWeights[symbol] = action.payload.weight;
+      rebalance(targetWeights, context, timestamp);
+      break;
+    }
+    case 'rebalance': {
       rebalance(targetWeights, context, timestamp);
       break;
     }
@@ -118,13 +125,37 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
   const equitySeries = [];
   const positionsSeries = [];
   const executed = new Set();
+  const schedules = [];
+
+  context.actions.forEach((action, index) => {
+    if (action.type === 'schedule') {
+      schedules.push({ action, index, state: {} });
+    }
+  });
 
   timeline.forEach((timestamp) => {
     context.actions.forEach((action, index) => {
+      if (action.type === 'schedule') return;
       if (executed.has(index)) return;
       if (action.ts && action.ts > timestamp) return;
       executeAction(action, context, timestamp);
       executed.add(index);
+    });
+
+    schedules.forEach((entry) => {
+      if (shouldTriggerSchedule(entry.action, timestamp, entry.state)) {
+        const scheduled = {
+          type: entry.action.payload.action,
+          payload: {
+            symbol: entry.action.payload.symbol,
+            qty: entry.action.payload.qty,
+            notional: entry.action.payload.notional,
+            all: entry.action.payload.all,
+            weight: entry.action.payload.weight
+          }
+        };
+        executeAction(scheduled, context, timestamp);
+      }
     });
 
     let equity = context.cash.value;
@@ -188,4 +219,60 @@ const computeDrawdown = (equitySeries) => {
     const dd = peak === 0 ? 0 : (point.value - peak) / peak;
     return { t: point.t, value: dd * 100 };
   });
+};
+
+const shouldTriggerSchedule = (action, timestamp, state) => {
+  const payload = action.payload || {};
+  const cadence = payload.cadence;
+  if (!cadence) return false;
+  const date = new Date(timestamp);
+  const utcDay = date.getUTCDay();
+  const isoDate = date.toISOString().slice(0, 10);
+
+  if (cadence === 'daily') {
+    if (state.last === isoDate) return false;
+    state.last = isoDate;
+    return true;
+  }
+
+  if (cadence === 'monthly') {
+    const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}`;
+    if (state.last === key) return false;
+    state.last = key;
+    return true;
+  }
+
+  if (cadence === 'weekly') {
+    const weekKey = getWeekKey(date);
+    if (state.last === weekKey) return false;
+    state.last = weekKey;
+    return true;
+  }
+
+  const dayIndex = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6
+  };
+
+  if (dayIndex[cadence] != null) {
+    if (utcDay !== dayIndex[cadence]) return false;
+    const weekKey = getWeekKey(date);
+    if (state.last === weekKey) return false;
+    state.last = weekKey;
+    return true;
+  }
+
+  return false;
+};
+
+const getWeekKey = (date) => {
+  const firstDay = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const dayOfYear = Math.floor((date - firstDay) / 86400000);
+  const week = Math.floor((dayOfYear + firstDay.getUTCDay()) / 7);
+  return `${date.getUTCFullYear()}-${week}`;
 };

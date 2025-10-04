@@ -41,11 +41,12 @@ npm install
 npm run dev
 ```
 
-Visit [http://localhost:5173](http://localhost:5173) to open the ChatTrack dashboard.
+Visit [http://localhost:5173](http://localhost:5173) to open the ChatTrack dashboard. If the backend is unavailable the front end
+falls back to bundled sample candles so you can still experiment with chat instructions and see equity/metric updates.
 
 ## Usage Tips
 
-1. Click **“Load SPY (1m, last 2 days)”** to fetch recent minute candles.
+1. Click **“Load SPY (1m, last 2 days)”** to fetch recent minute candles (or use the offline sample if the API is down).
 2. Try chat prompts like:
    - `Start with 100k`
    - `Buy 10 SPY`
@@ -53,6 +54,7 @@ Visit [http://localhost:5173](http://localhost:5173) to open the ChatTrack dashb
    - `Backtest 2024-10-01 to 2024-10-03`
 3. Toggle **“Compare vs SPY”** to overlay a buy-and-hold benchmark.
 
+Type your instructions into the input at the bottom of the chat panel. The backtest runs in a web worker to keep the UI responsive. Equity curve and drawdown charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more (or the browser computes them if the backend is offline).
 The backtest runs in a web worker to keep the UI responsive. Equity curve and drawdown charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more.
 
 ## Run Scripts
