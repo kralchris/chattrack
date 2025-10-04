@@ -11,6 +11,8 @@ const symbolMap = {
   qqq: 'QQQ'
 };
 
+const techUniverse = ['AAPL', 'MSFT', 'NVDA', 'GOOG', 'META', 'AMD', 'ORCL', 'ADBE'];
+
 const dayMap = {
   monday: 'monday',
   tuesday: 'tuesday',
@@ -31,6 +33,29 @@ const resolveSymbol = (raw) => {
   if (symbolMap[cleaned]) return symbolMap[cleaned];
   if (/^[a-z]{1,5}$/.test(cleaned)) return cleaned.toUpperCase();
   return null;
+};
+
+const hashString = (input) => {
+  let hash = 0;
+  const str = String(input ?? '');
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 31 + str.charCodeAt(i)) & 0xffffffff;
+  }
+  return Math.abs(hash);
+};
+
+const pickTechSymbol = (message) => {
+  const seed = hashString(message);
+  return techUniverse[seed % techUniverse.length];
+};
+
+const unitToMs = (amount, unit) => {
+  const lower = unit.toLowerCase();
+  if (lower.startsWith('day')) return amount * 24 * 60 * 60 * 1000;
+  if (lower.startsWith('week')) return amount * 7 * 24 * 60 * 60 * 1000;
+  if (lower.startsWith('month')) return amount * 30 * 24 * 60 * 60 * 1000;
+  if (lower.startsWith('year')) return amount * 365 * 24 * 60 * 60 * 1000;
+  return 0;
 };
 
 const detectCadence = (text) => {
@@ -112,7 +137,12 @@ const extractSchedule = (message, lower) => {
     'ago',
     'usd',
     'dollars',
-    '$'
+    '$',
+    'random',
+    'choice',
+    'tech',
+    'technology',
+    'sector'
   ]);
 
   const isFiller = (token) => filler.has(token);
@@ -162,6 +192,10 @@ const extractSchedule = (message, lower) => {
     if (anyToken) symbol = anyToken;
   }
 
+  if ((symbol && (symbol === 'TECH' || symbol === 'TECHN')) || lower.includes('random tech') || lower.includes('random technology')) {
+    symbol = pickTechSymbol(message);
+  }
+
   if (!symbol) return null;
 
   const currencyPatterns = [
@@ -197,6 +231,21 @@ const extractSchedule = (message, lower) => {
 
   if (payload.action === 'sell' && !payload.qty && !payload.notional && !payload.all) {
     payload.all = true;
+  }
+
+  if (lower.includes('buy or sell') || lower.includes('random choice')) {
+    payload.randomAction = ['buy', 'sell'];
+    payload.randomSeed = hashString(message);
+    payload.note = 'Randomized direction';
+  }
+
+  const holdMatch = lower.match(/sell after\s+(\d+)\s*(day|days|week|weeks|month|months|year|years)/);
+  if (holdMatch) {
+    const holdMs = unitToMs(Number(holdMatch[1]), holdMatch[2]);
+    if (holdMs > 0) {
+      payload.holdPeriodMs = holdMs;
+      payload.note = payload.note ? `${payload.note}; exit after ${holdMatch[1]} ${holdMatch[2]}` : `Exit after ${holdMatch[1]} ${holdMatch[2]}`;
+    }
   }
 
   return {

@@ -3,6 +3,7 @@ import ChatBox from './components/ChatBox.jsx';
 import ChartPanel from './components/ChartPanel.jsx';
 import MetricsCards from './components/MetricsCards.jsx';
 import AllocRibbon from './components/AllocRibbon.jsx';
+import TradeLog from './components/TradeLog.jsx';
 import { useChatStore } from './store.js';
 import { parseMessage } from './utils/parser.js';
 import { getCandles, postMetrics } from './utils/api.js';
@@ -43,6 +44,7 @@ const extractRelativeRange = (text) => {
 export default function App() {
   const workerRef = useRef(null);
   const [isLoading, setIsLoading] = useState(false);
+  const liveDataRef = useRef(false);
   const {
     addMessage,
     actions,
@@ -58,6 +60,7 @@ export default function App() {
     setTradesCount,
     setOffline,
     setNotes,
+    setTrades,
     dateRange,
     setDateRange,
     activeSymbol,
@@ -81,10 +84,11 @@ export default function App() {
     const worker = new Worker(new URL('./workers/backtest.worker.js', import.meta.url));
     workerRef.current = worker;
     worker.onmessage = async (event) => {
-      const { equitySeries, drawdownSeries, tradesCount, notes: workerNotes } = event.data;
+      const { equitySeries, drawdownSeries, tradesCount, notes: workerNotes, trades: tradeLog } = event.data;
       setEquity(equitySeries, drawdownSeries);
       setTradesCount(tradesCount);
       setNotes(workerNotes);
+      setTrades(tradeLog || []);
       if (equitySeries?.length) {
         let metrics = null;
         try {
@@ -129,13 +133,24 @@ export default function App() {
     try {
       const response = await getCandles({ symbol, interval: range.interval || DEFAULT_INTERVAL, start: range.start, end: range.end });
       setCandles(symbol, response);
-      setOffline(Boolean(response.offline));
+      const offlineNow = Boolean(response.offline);
+      setOffline(offlineNow);
       setActiveSymbol(symbol);
-      if (response.offline && !wasOffline) {
+      if (offlineNow && !wasOffline) {
         addMessage({
           role: 'assistant',
           content: `Loaded ${symbol.toUpperCase()} using built-in sample data. Start the FastAPI backend for live market candles.`
         });
+      } else if (!offlineNow && (wasOffline || !liveDataRef.current)) {
+        const last = response.candles?.[response.candles.length - 1];
+        if (last?.t) {
+          const latest = new Date(last.t).toLocaleString();
+          addMessage({
+            role: 'assistant',
+            content: `Streaming live Yahoo Finance data for ${symbol.toUpperCase()}. Latest 1m candle captured at ${latest}.`
+          });
+        }
+        liveDataRef.current = true;
       }
       if (symbol === DEFAULT_SYMBOL) {
         const base = buildBenchmarkSeries(response.candles, capital);
@@ -238,11 +253,12 @@ export default function App() {
           </div>
         </header>
         <AllocRibbon onToggleBenchmark={benchmarkToggle} />
-        <main className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-[38%_62%]">
-          <div className="h-full"><ChatBox onSend={handleSend} /></div>
-          <div className="flex h-full flex-col gap-4">
-            <ChartPanel />
-            <MetricsCards />
+        <main className="flex flex-1 flex-col gap-4 overflow-hidden">
+          <ChartPanel />
+          <MetricsCards />
+          <div className="flex flex-col gap-4">
+            <ChatBox onSend={handleSend} />
+            <TradeLog />
           </div>
         </main>
       </div>

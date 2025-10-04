@@ -9,7 +9,8 @@ import {
   Tooltip,
   AreaChart,
   Area,
-  Legend
+  Legend,
+  Scatter
 } from 'recharts';
 import { formatCurrency, formatDateTime } from '../utils/formatters.js';
 import { useChatStore } from '../store.js';
@@ -22,8 +23,50 @@ const tooltipStyle = {
   padding: '10px 12px'
 };
 
+function CustomTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const timestamp = formatDateTime(label);
+  const equityRow = payload.find((item) => item.dataKey === 'value');
+  const tradeRows = payload.filter((item) => item.dataKey === 'y' && item.payload?.symbol);
+
+  return (
+    <div style={tooltipStyle}>
+      <div className="text-xs font-semibold text-white/70">{timestamp}</div>
+      {equityRow ? (
+        <div className="mt-1 text-sm font-semibold text-sky-100">
+          Equity: {formatCurrency(equityRow.value)}
+        </div>
+      ) : null}
+      {tradeRows.map((item, index) => (
+        <div key={index} className="mt-2 rounded-lg bg-slate-900/60 p-2 text-xs text-white/80">
+          <div className="font-semibold uppercase tracking-wide text-white/60">{item.name}</div>
+          <div>{item.payload.symbol}</div>
+          {item.payload.qty ? <div>Qty: {item.payload.qty.toFixed(3)}</div> : null}
+          {item.payload.price ? <div>Fill: {formatCurrency(item.payload.price)}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const renderMarker = (color, label) => (props) => {
+  const { cx, cy } = props;
+  if (cx == null || cy == null) return null;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={6} fill={color} stroke="#0f172a" strokeWidth={1.5} />
+      <text x={cx} y={cy + 3} textAnchor="middle" fontSize={9} fill="#0f172a" fontWeight="600">
+        {label}
+      </text>
+    </g>
+  );
+};
+
+const buyMarker = renderMarker('#22d3ee', 'B');
+const sellMarker = renderMarker('#f97316', 'S');
+
 export default function ChartPanel() {
-  const { equitySeries, drawdownSeries, benchmark, comparingBenchmark } = useChatStore();
+  const { equitySeries, drawdownSeries, benchmark, comparingBenchmark, trades } = useChatStore();
   const chartData = useMemo(() => {
     if (!equitySeries?.length) return [];
     const benchmarkMap = new Map(benchmark?.map((b) => [b.t, b.value]));
@@ -33,6 +76,35 @@ export default function ChartPanel() {
     }));
   }, [equitySeries, benchmark]);
 
+  const markers = useMemo(() => {
+    if (!equitySeries?.length || !trades?.length) {
+      return { buys: [], sells: [] };
+    }
+    const equityMap = new Map(equitySeries.map((point) => [point.t, point.value]));
+    const buys = [];
+    const sells = [];
+    trades.forEach((trade) => {
+      if (trade.side !== 'buy' && trade.side !== 'sell') return;
+      const y = equityMap.get(trade.t);
+      if (y == null) return;
+      const payload = {
+        t: trade.t,
+        x: trade.t,
+        y,
+        equity: y,
+        symbol: trade.symbol,
+        price: trade.price,
+        qty: trade.qty
+      };
+      if (trade.side === 'buy') {
+        buys.push(payload);
+      } else {
+        sells.push(payload);
+      }
+    });
+    return { buys, sells };
+  }, [equitySeries, trades]);
+
   return (
     <div className="flex h-full flex-col gap-4 rounded-3xl bg-surface/70 p-4 shadow-glow backdrop-blur">
       <div className="flex items-center justify-between">
@@ -41,7 +113,7 @@ export default function ChartPanel() {
           <p className="text-xs text-white/50">Track portfolio performance with every instruction you send.</p>
         </div>
       </div>
-      <div className="h-72 rounded-2xl bg-black/20 p-3">
+      <div className="h-[26rem] rounded-2xl bg-black/20 p-3">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
             <defs>
@@ -62,11 +134,7 @@ export default function ChartPanel() {
               stroke="rgba(226,232,240,0.4)"
               tick={{ fontSize: 12 }}
             />
-            <Tooltip
-              contentStyle={tooltipStyle}
-              labelFormatter={(label) => formatDateTime(label)}
-              formatter={(value) => formatCurrency(value)}
-            />
+            <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ paddingTop: 10 }} />
             <Line
               type="monotone"
@@ -86,6 +154,30 @@ export default function ChartPanel() {
                 dot={false}
                 name="Benchmark"
                 isAnimationActive={false}
+              />
+            ) : null}
+            {markers.buys.length ? (
+              <Scatter
+                data={markers.buys}
+                xAxisId={0}
+                yAxisId={0}
+                dataKey="y"
+                shape={buyMarker}
+                name="Buy fills"
+                legendType="circle"
+                fill="#22d3ee"
+              />
+            ) : null}
+            {markers.sells.length ? (
+              <Scatter
+                data={markers.sells}
+                xAxisId={0}
+                yAxisId={0}
+                dataKey="y"
+                shape={sellMarker}
+                name="Sell fills"
+                legendType="circle"
+                fill="#f97316"
               />
             ) : null}
           </LineChart>

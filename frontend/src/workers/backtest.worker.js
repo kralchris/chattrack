@@ -1,4 +1,13 @@
 const FEE_RATE = 0.0005;
+const SPREAD_RATE = 0.0002;
+const OVERNIGHT_RATE = 0.00005;
+
+const applySpread = (price, side) => {
+  if (!price) return price;
+  if (side === 'buy') return price * (1 + SPREAD_RATE);
+  if (side === 'sell') return price * (1 - SPREAD_RATE);
+  return price;
+};
 
 const buildTimeline = (candlesBySymbol) => {
   const timeSet = new Set();
@@ -23,8 +32,12 @@ const findPriceAt = (series, timestamp) => {
   return price;
 };
 
-const executeAction = (action, context, timestamp) => {
-  const { cash, positions, priceLookup, targetWeights, trades } = context;
+const recordTrade = (context, entry) => {
+  context.tradeLog.push(entry);
+};
+
+const executeAction = (action, context, timestamp, meta = {}) => {
+  const { cash, positions, priceLookup, targetWeights, trades, costBasis } = context;
   switch (action.type) {
     case 'buy': {
       const symbol = action.payload.symbol;
@@ -39,14 +52,33 @@ const executeAction = (action, context, timestamp) => {
         qty = equity > 0 ? (equity * 0.99) / price : 0;
       }
       if (!qty || qty <= 0) return;
-      const cost = price * qty;
+      const execPrice = applySpread(price, 'buy');
+      const cost = execPrice * qty;
       const fees = cost * FEE_RATE;
       if (cash.value < cost + fees) {
         return;
       }
       cash.value -= cost + fees;
       positions[symbol] = (positions[symbol] || 0) + qty;
+      const basis = costBasis[symbol] || { qty: 0, total: 0 };
+      basis.qty += qty;
+      basis.total += cost + fees;
+      costBasis[symbol] = basis;
       trades.count += 1;
+      const tradeEntry = {
+        t: timestamp,
+        side: 'buy',
+        symbol,
+        qty,
+        price: execPrice,
+        fees,
+        notional: cost,
+        pnl: 0,
+        cashAfter: cash.value,
+        note: meta.note || null
+      };
+      recordTrade(context, tradeEntry);
+      return tradeEntry;
       break;
     }
     case 'sell': {
@@ -56,12 +88,34 @@ const executeAction = (action, context, timestamp) => {
       const held = positions[symbol] || 0;
       const qty = action.payload.all ? held : Math.min(action.payload.qty || 0, held);
       if (!qty) return;
-      const proceeds = price * qty;
+      const execPrice = applySpread(price, 'sell');
+      const proceeds = execPrice * qty;
       const fees = proceeds * FEE_RATE;
       cash.value += proceeds - fees;
       positions[symbol] = held - qty;
       if (positions[symbol] <= 1e-6) delete positions[symbol];
+      const basis = costBasis[symbol] || { qty: 0, total: 0 };
+      const avgCost = basis.qty > 0 ? basis.total / basis.qty : 0;
+      const realizedCost = Math.min(qty, basis.qty) * avgCost;
+      basis.qty = Math.max(basis.qty - qty, 0);
+      basis.total = Math.max(basis.total - realizedCost, 0);
+      costBasis[symbol] = basis;
+      const pnl = proceeds - fees - realizedCost;
       trades.count += 1;
+      const tradeEntry = {
+        t: timestamp,
+        side: 'sell',
+        symbol,
+        qty,
+        price: execPrice,
+        fees,
+        notional: proceeds,
+        pnl,
+        cashAfter: cash.value,
+        note: meta.note || null
+      };
+      recordTrade(context, tradeEntry);
+      return tradeEntry;
       break;
     }
     case 'allocate': {
@@ -90,7 +144,7 @@ const executeAction = (action, context, timestamp) => {
 const rebalance = (targetWeights, context, timestamp) => {
   const totalWeight = Object.values(targetWeights).reduce((acc, weight) => acc + weight, 0);
   if (totalWeight <= 0) return;
-  const { cash, positions, priceLookup, trades } = context;
+  const { cash, positions, priceLookup, trades, costBasis } = context;
   const equity = context.equity(timestamp);
   if (!equity) return;
   Object.entries(targetWeights).forEach(([symbol, weight]) => {
@@ -103,21 +157,114 @@ const rebalance = (targetWeights, context, timestamp) => {
     if (Math.abs(diffValue) / equity < 0.005) return;
     const qty = diffValue / price;
     if (qty > 0) {
-      const cost = qty * price;
+      const execPrice = applySpread(price, 'buy');
+      const cost = qty * execPrice;
       const fees = cost * FEE_RATE;
       if (cash.value < cost + fees) return;
       cash.value -= cost + fees;
       positions[symbol] = currentQty + qty;
+      const basis = costBasis[symbol] || { qty: 0, total: 0 };
+      basis.qty += qty;
+      basis.total += cost + fees;
+      costBasis[symbol] = basis;
       trades.count += 1;
+      recordTrade(context, {
+        t: timestamp,
+        side: 'buy',
+        symbol,
+        qty,
+        price: execPrice,
+        fees,
+        notional: cost,
+        pnl: 0,
+        cashAfter: cash.value,
+        note: 'Rebalance'
+      });
     } else {
       const sellQty = Math.min(-qty, currentQty);
       if (!sellQty) return;
-      const proceeds = sellQty * price;
+      const execPrice = applySpread(price, 'sell');
+      const proceeds = sellQty * execPrice;
       const fees = proceeds * FEE_RATE;
       cash.value += proceeds - fees;
       positions[symbol] = currentQty - sellQty;
+      const basis = costBasis[symbol] || { qty: 0, total: 0 };
+      const avgCost = basis.qty > 0 ? basis.total / basis.qty : 0;
+      const realizedCost = Math.min(sellQty, basis.qty) * avgCost;
+      basis.qty = Math.max(basis.qty - sellQty, 0);
+      basis.total = Math.max(basis.total - realizedCost, 0);
+      costBasis[symbol] = basis;
+      const pnl = proceeds - fees - realizedCost;
       trades.count += 1;
+      recordTrade(context, {
+        t: timestamp,
+        side: 'sell',
+        symbol,
+        qty: sellQty,
+        price: execPrice,
+        fees,
+        notional: proceeds,
+        pnl,
+        cashAfter: cash.value,
+        note: 'Rebalance'
+      });
     }
+  });
+};
+
+const hashString = (input) => {
+  let hash = 0;
+  const str = String(input ?? '');
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 31 + str.charCodeAt(i)) & 0xffffffff;
+  }
+  return Math.abs(hash);
+};
+
+const deterministicPick = (seed, options) => {
+  if (!options?.length) return null;
+  const index = seed % options.length;
+  return options[index];
+};
+
+const scheduleAutoExit = (context, baseTimestamp, tradeResult, schedulePayload) => {
+  if (!tradeResult || !schedulePayload?.holdPeriodMs) return;
+  const exitTimestamp = baseTimestamp + schedulePayload.holdPeriodMs;
+  context.pendingEvents.push({
+    t: exitTimestamp,
+    action: {
+      type: 'sell',
+      payload: {
+        symbol: tradeResult.symbol,
+        qty: tradeResult.qty
+      }
+    },
+    note: `Auto exit after hold (${Math.round(schedulePayload.holdPeriodMs / (24 * 3600 * 1000))} days)`
+  });
+};
+
+const applyOvernightRoll = (context, timestamp) => {
+  let exposure = 0;
+  Object.entries(context.positions).forEach(([symbol, qty]) => {
+    const price = context.priceLookup(symbol, timestamp);
+    if (!price) return;
+    exposure += qty * price;
+  });
+  if (exposure <= 0) return;
+  const charge = exposure * OVERNIGHT_RATE;
+  if (!charge) return;
+  context.cash.value -= charge;
+  recordTrade(context, {
+    t: timestamp,
+    side: 'roll',
+    symbol: 'PORT',
+    qty: 0,
+    price: 0,
+    fees: 0,
+    notional: exposure,
+    pnl: -charge,
+    cashAfter: context.cash.value,
+    note: 'Overnight financing cost'
   });
 };
 
@@ -126,6 +273,7 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
   const positionsSeries = [];
   const executed = new Set();
   const schedules = [];
+  let lastDateKey = null;
 
   context.actions.forEach((action, index) => {
     if (action.type === 'schedule') {
@@ -134,6 +282,25 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
   });
 
   timeline.forEach((timestamp) => {
+    const currentDateKey = new Date(timestamp).toISOString().slice(0, 10);
+    if (lastDateKey && currentDateKey !== lastDateKey) {
+      applyOvernightRoll(context, timestamp);
+    }
+    lastDateKey = currentDateKey;
+
+    // process pending exits
+    if (context.pendingEvents.length) {
+      const remaining = [];
+      context.pendingEvents.forEach((event) => {
+        if (event.t <= timestamp) {
+          executeAction(event.action, context, timestamp, { note: event.note });
+        } else {
+          remaining.push(event);
+        }
+      });
+      context.pendingEvents = remaining;
+    }
+
     context.actions.forEach((action, index) => {
       if (action.type === 'schedule') return;
       if (executed.has(index)) return;
@@ -144,16 +311,26 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
 
     schedules.forEach((entry) => {
       if (shouldTriggerSchedule(entry.action, timestamp, entry.state)) {
+        const payload = entry.action.payload;
         const scheduledPayload = {
-          symbol: entry.action.payload.symbol,
-          qty: entry.action.payload.qty,
-          notional: entry.action.payload.notional,
-          all: entry.action.payload.all,
-          weight: entry.action.payload.weight
+          symbol: payload.symbol,
+          qty: payload.qty,
+          notional: payload.notional,
+          all: payload.all,
+          weight: payload.weight
         };
 
+        let resolvedAction = payload.action;
+        if (payload.randomAction?.length) {
+          const seed = hashString(`${payload.randomSeed ?? entry.index}-${timestamp}`);
+          const randomPicked = deterministicPick(seed, payload.randomAction);
+          if (randomPicked) {
+            resolvedAction = randomPicked;
+          }
+        }
+
         if (
-          entry.action.payload.action === 'buy' &&
+          resolvedAction === 'buy' &&
           scheduledPayload.qty == null &&
           scheduledPayload.notional == null &&
           !scheduledPayload.all
@@ -161,11 +338,20 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
           scheduledPayload.qty = 1;
         }
 
-        const scheduled = {
-          type: entry.action.payload.action,
-          payload: scheduledPayload
-        };
-        executeAction(scheduled, context, timestamp);
+        if (resolvedAction === 'sell' && scheduledPayload.qty == null && !scheduledPayload.all && !scheduledPayload.notional) {
+          scheduledPayload.all = true;
+        }
+
+        const tradeResult = executeAction(
+          { type: resolvedAction, payload: scheduledPayload },
+          context,
+          timestamp,
+          { note: payload.note || `Scheduled ${resolvedAction}` }
+        );
+
+        if (resolvedAction === 'buy') {
+          scheduleAutoExit(context, timestamp, tradeResult, payload);
+        }
       }
     });
 
@@ -192,6 +378,9 @@ self.onmessage = (event) => {
   const targetWeights = {};
   const trades = { count: 0 };
   const notes = [];
+  const tradeLog = [];
+  const costBasis = {};
+  const pendingEvents = [];
 
   const context = {
     cash,
@@ -201,6 +390,9 @@ self.onmessage = (event) => {
     targetWeights,
     trades,
     notes,
+    tradeLog,
+    costBasis,
+    pendingEvents,
     equity: (timestamp) => {
       let total = cash.value;
       Object.entries(positions).forEach(([symbol, qty]) => {
@@ -219,7 +411,8 @@ self.onmessage = (event) => {
     drawdownSeries,
     positionsSeries,
     tradesCount: trades.count,
-    notes
+    notes,
+    trades: tradeLog
   });
 };
 
