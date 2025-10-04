@@ -61,7 +61,7 @@ function TradeTooltip({ active, payload, label }) {
 const createDot = (color) => (props) => {
   const { cx, cy } = props;
   if (cx == null || cy == null) return null;
-  return <circle cx={cx} cy={cy} r={6} fill={color} stroke="#0f172a" strokeWidth={1.5} />;
+  return <circle cx={cx} cy={cy} r={5} fill={color} stroke="#0f172a" strokeWidth={1.25} />;
 };
 
 const buyDot = createDot('#22c55e');
@@ -122,7 +122,7 @@ export default function ChartPanel() {
         </div>
         <div className="h-[26rem] rounded-2xl bg-black/20 p-3">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+            <LineChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
               <defs>
                 <linearGradient id="equityStroke" x1="0" x2="1" y1="0" y2="0">
                   <stop offset="0%" stopColor="#38bdf8" />
@@ -140,7 +140,7 @@ export default function ChartPanel() {
               />
               <YAxis tickFormatter={(value) => formatCurrency(value)} stroke="rgba(226,232,240,0.4)" tick={{ fontSize: 12 }} />
               <Tooltip content={<EquityTooltip />} />
-              <Legend wrapperStyle={{ paddingTop: 10 }} />
+              <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: 12 }} iconType="circle" />
               <Line
                 type="monotone"
                 dataKey="value"
@@ -176,7 +176,7 @@ export default function ChartPanel() {
         <div className="h-60 rounded-2xl bg-black/20 p-3">
           {hasTrades ? (
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+              <ScatterChart margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
                 <CartesianGrid stroke="rgba(148, 163, 184, 0.1)" strokeDasharray="3 3" />
                 <XAxis
                   dataKey="t"
@@ -193,7 +193,7 @@ export default function ChartPanel() {
                   tick={{ fontSize: 12 }}
                 />
                 <Tooltip content={<TradeTooltip />} cursor={{ stroke: 'rgba(148, 163, 184, 0.2)' }} />
-                <Legend wrapperStyle={{ paddingTop: 10 }} />
+                <Legend verticalAlign="top" align="left" wrapperStyle={{ paddingBottom: 12 }} iconType="circle" />
                 {tradePoints.buys.length ? (
                   <Scatter data={tradePoints.buys} shape={buyDot} name="Buy" fill="#22c55e" />
                 ) : null}

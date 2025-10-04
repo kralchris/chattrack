@@ -6,8 +6,16 @@ const symbolMap = {
   tsla: 'TSLA',
   apple: 'AAPL',
   aapl: 'AAPL',
+  amazon: 'AMZN',
+  amzn: 'AMZN',
   microsoft: 'MSFT',
   msft: 'MSFT',
+  google: 'GOOGL',
+  googl: 'GOOGL',
+  goog: 'GOOG',
+  alphabet: 'GOOGL',
+  meta: 'META',
+  facebook: 'META',
   qqq: 'QQQ'
 };
 
