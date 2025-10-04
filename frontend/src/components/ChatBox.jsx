@@ -21,7 +21,7 @@ export default function ChatBox({ onSend }) {
   };
 
   return (
-    <div className="flex h-full flex-col rounded-2xl bg-surface/80 p-4 shadow-lg shadow-black/30 backdrop-blur">
+    <div className="flex flex-col rounded-2xl bg-surface/80 p-4 shadow-lg shadow-black/30 backdrop-blur">
       <div ref={containerRef} className="flex-1 space-y-3 overflow-y-auto pr-2">
         {messages.map((message, index) => (
           <MessageBubble key={index} message={message} />

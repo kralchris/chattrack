@@ -253,7 +253,7 @@ export default function App() {
           </div>
         </header>
         <AllocRibbon onToggleBenchmark={benchmarkToggle} />
-        <main className="flex flex-1 flex-col gap-4 overflow-hidden">
+        <main className="flex flex-1 flex-col gap-4 overflow-y-auto pr-1">
           <ChartPanel />
           <MetricsCards />
           <div className="flex flex-col gap-4">
