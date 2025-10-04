@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -195,7 +197,7 @@ def _download_or_fallback(symbol: str, interval: str, start_dt: datetime, end_dt
             return df, False
     except Exception as exc:  # noqa: BLE001
         logger.info("yfinance fetch failed for %s: %s", symbol, exc)
-    fallback = _load_fallback(symbol, interval)
+    fallback = _load_fallback(symbol, interval, start_dt, end_dt)
     if fallback is not None:
         return fallback, True
     raise HTTPException(status_code=404, detail="No data available online or offline for requested symbol")
@@ -213,15 +215,94 @@ def _persist_csv(symbol: str, interval: str, df: pd.DataFrame) -> None:
     out_df.to_csv(path, index=False)
 
 
-def _load_fallback(symbol: str, interval: str) -> pd.DataFrame | None:
+def _load_fallback(symbol: str, interval: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame | None:
     filename = f"{symbol.lower()}_sample_{interval}.csv"
     path = DATA_DIR / filename
     if not path.exists():
-        return None
+        synthetic = _generate_synthetic(symbol, interval, start_dt, end_dt)
+        if synthetic is None:
+            return None
+        try:
+            _persist_csv(symbol, interval, synthetic)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("unable to persist synthetic CSV for %s: %s", symbol, exc)
+        return synthetic
     csv_df = pd.read_csv(path, parse_dates=["timestamp"])
     csv_df.set_index(pd.to_datetime(csv_df["timestamp"], utc=True), inplace=True)
     csv_df = csv_df[["open", "high", "low", "close", "volume"]]
     return csv_df
+
+
+def _generate_synthetic(symbol: str, interval: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame | None:
+    freq = _interval_to_pandas_freq(interval)
+    if freq is None:
+        return None
+
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    if end_dt <= start_dt:
+        end_dt = start_dt + timedelta(hours=4)
+
+    # ensure deterministic behaviour per symbol/range so repeated calls match
+    seed = abs(hash((symbol.upper(), start_dt.isoformat(), end_dt.isoformat()))) % (2**32)
+    rng = random.Random(seed)
+
+    index = pd.date_range(start=start_dt, end=end_dt, freq=freq, tz=timezone.utc)
+    if len(index) == 0:
+        # fallback to at least a trading day of samples
+        index = pd.date_range(end=end_dt, periods=240, freq=freq, tz=timezone.utc)
+
+    base_price = 50 + (sum(ord(ch) for ch in symbol.upper()) % 400)
+    volatility = 0.002 + (rng.random() * 0.004)
+    drift = (rng.random() - 0.5) * 0.0005
+
+    prices = []
+    last_close = base_price
+
+    for idx, timestamp in enumerate(index):
+        shock = rng.gauss(0, 1)
+        change = drift + volatility * shock
+        open_price = last_close
+        close_price = max(0.5, open_price * (1 + change))
+        high_price = max(open_price, close_price) * (1 + abs(rng.random()) * 0.0015 + 0.0005)
+        low_price = min(open_price, close_price) * (1 - abs(rng.random()) * 0.0015 - 0.0005)
+        volume = 500_000 + rng.randint(0, 1_000_000)
+
+        prices.append(
+            {
+                "timestamp": timestamp,
+                "open": float(open_price),
+                "high": float(high_price),
+                "low": float(low_price),
+                "close": float(close_price),
+                "volume": float(volume),
+            }
+        )
+
+        # introduce small cyclical behaviour to avoid flat lines
+        last_close = close_price * (1 + math.sin(idx / 12) * 0.0005)
+
+    df = pd.DataFrame(prices)
+    df.set_index("timestamp", inplace=True)
+    return df[["open", "high", "low", "close", "volume"]]
+
+
+def _interval_to_pandas_freq(interval: str) -> str | None:
+    interval = interval.lower()
+    if interval.endswith("m"):
+        minutes = int(interval[:-1])
+        return f"{minutes}min"
+    if interval.endswith("h"):
+        hours = int(interval[:-1])
+        return f"{hours}h"
+    if interval.endswith("d"):
+        days = int(interval[:-1])
+        return f"{days}d"
+    if interval == "1m":
+        return "1min"
+    return None
 
 
 def _df_to_candles(df: pd.DataFrame) -> list[dict[str, Any]]:

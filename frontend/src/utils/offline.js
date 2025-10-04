@@ -1,58 +1,102 @@
-const SAMPLE_TIMESTAMPS = [
-  1727793000000,
-  1727793060000,
-  1727793120000,
-  1727793180000,
-  1727793240000,
-  1727793300000
-];
-
-const SPY_PRICES = [
-  { o: 430.1, h: 430.5, l: 429.9, c: 430.4, v: 1200000 },
-  { o: 430.42, h: 430.6, l: 430.1, c: 430.2, v: 980000 },
-  { o: 430.18, h: 430.55, l: 430.0, c: 430.48, v: 860000 },
-  { o: 430.46, h: 430.8, l: 430.2, c: 430.7, v: 910000 },
-  { o: 430.68, h: 431.0, l: 430.5, c: 430.95, v: 800000 },
-  { o: 430.96, h: 431.1, l: 430.7, c: 430.85, v: 750000 }
-];
-
-const AAPL_PRICES = [
-  { o: 170.0, h: 170.2, l: 169.8, c: 170.1, v: 2200000 },
-  { o: 170.12, h: 170.3, l: 169.9, c: 170.05, v: 2100000 },
-  { o: 170.04, h: 170.25, l: 169.95, c: 170.2, v: 1900000 },
-  { o: 170.22, h: 170.4, l: 170.0, c: 170.1, v: 2000000 },
-  { o: 170.08, h: 170.35, l: 169.98, c: 170.25, v: 1850000 },
-  { o: 170.26, h: 170.5, l: 170.1, c: 170.45, v: 1750000 }
-];
-
-const MSFT_PRICES = [
-  { o: 315.5, h: 315.9, l: 315.2, c: 315.7, v: 1500000 },
-  { o: 315.72, h: 316.1, l: 315.4, c: 315.95, v: 1480000 },
-  { o: 315.96, h: 316.3, l: 315.6, c: 316.18, v: 1420000 },
-  { o: 316.2, h: 316.6, l: 315.9, c: 316.42, v: 1380000 },
-  { o: 316.45, h: 316.9, l: 316.2, c: 316.75, v: 1330000 },
-  { o: 316.78, h: 317.1, l: 316.5, c: 316.88, v: 1290000 }
-];
-
-const BASE_SERIES = {
-  SPY: buildSeries('SPY', SPY_PRICES),
-  AAPL: buildSeries('AAPL', AAPL_PRICES),
-  MSFT: buildSeries('MSFT', MSFT_PRICES)
-};
-
-function last(arr) {
-  return arr[arr.length - 1];
-}
-
-function buildSeries(symbol, prices) {
-  return SAMPLE_TIMESTAMPS.map((t, index) => ({
-    t,
-    symbol,
-    ...prices[index]
-  }));
-}
-
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+const STATIC_KEYS = new Set(['SPY', 'AAPL', 'MSFT']);
+const BASE_SAMPLES = buildBaseSamples();
+
+function buildBaseSamples() {
+  const now = Date.now();
+  const minute = 60 * 1000;
+  const seeds = {
+    SPY: { base: 430, spread: 0.35 },
+    AAPL: { base: 170, spread: 0.25 },
+    MSFT: { base: 315, spread: 0.3 }
+  };
+
+  return Object.fromEntries(
+    Object.entries(seeds).map(([symbol, { base, spread }]) => [
+      symbol,
+      buildSeededSeries({ symbol, basePrice: base, spread, startMs: now - 180 * minute, points: 180 })
+    ])
+  );
+}
+
+function buildSeededSeries({ symbol, basePrice, spread, startMs, points, interval = '1m' }) {
+  const stepMs = intervalToMs(interval);
+  const candles = [];
+  let price = basePrice;
+  for (let i = 0; i < points; i += 1) {
+    const t = startMs + i * stepMs;
+    const drift = Math.sin(i / 14) * spread;
+    const shock = ((hashCode(`${symbol}-${i}`) % 13) - 6) * spread * 0.1;
+    const open = price;
+    const close = Math.max(0.5, open + drift + shock);
+    const high = Math.max(open, close) + Math.abs(drift) * 0.5 + spread * 0.2;
+    const low = Math.min(open, close) - Math.abs(drift) * 0.5 - spread * 0.2;
+    const volume = 400000 + ((hashCode(`${symbol}-v-${i}`) >>> 0) % 500000);
+    candles.push({ t, symbol, o: open, h: high, l: low, c: close, v: volume });
+    price = close;
+  }
+  return candles;
+}
+
+function pseudoRandom(seed) {
+  let t = seed + 0x6d2b79f5;
+  return () => {
+    t |= 0;
+    t = (t + 0x6d2b79f5) | 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return (((r ^ (r >>> 14)) >>> 0) / 4294967296);
+  };
+}
+
+function generateSyntheticSeries(symbol, startMs, endMs, interval = '1m') {
+  const stepMs = intervalToMs(interval);
+  const now = Date.now();
+  const start = startMs ?? (endMs ? endMs - 2 * 24 * 60 * 60 * 1000 : now - 2 * 24 * 60 * 60 * 1000);
+  const end = endMs ?? start + 2 * 24 * 60 * 60 * 1000;
+  const total = Math.max(60, Math.floor((end - start) / stepMs));
+  const seed = Math.abs(hashCode(`${symbol}-${start}-${end}-${interval}`));
+  const rand = pseudoRandom(seed);
+  const base = 40 + (Math.abs(hashCode(symbol)) % 400);
+  let price = base;
+  const candles = [];
+
+  for (let i = 0; i <= total; i += 1) {
+    const t = start + i * stepMs;
+    const drift = (rand() - 0.5) * (base * 0.0025);
+    const shock = (rand() - 0.5) * (base * 0.004);
+    const spread = base * 0.001 * rand();
+    const open = price;
+    const close = Math.max(0.5, open + drift + shock);
+    const high = Math.max(open, close) + spread;
+    const low = Math.max(0.1, Math.min(open, close) - spread);
+    const volume = 250000 + Math.floor(rand() * 900000);
+    candles.push({ t, symbol, o: open, h: high, l: low, c: close, v: volume });
+    price = close;
+  }
+
+  return candles;
+}
+
+function hashCode(input) {
+  const str = String(input ?? '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+function intervalToMs(interval) {
+  if (!interval) return 60 * 1000;
+  const lower = interval.toLowerCase();
+  if (lower.endsWith('m')) return Number(lower.slice(0, -1) || '1') * 60 * 1000;
+  if (lower.endsWith('h')) return Number(lower.slice(0, -1) || '1') * 60 * 60 * 1000;
+  if (lower.endsWith('d')) return Number(lower.slice(0, -1) || '1') * 24 * 60 * 60 * 1000;
+  return 60 * 1000;
+}
 
 function toMs(iso) {
   return iso ? new Date(iso).getTime() : null;
@@ -64,7 +108,8 @@ function filterRange(candles, startMs, endMs) {
     const beforeEnd = endMs == null || candle.t <= endMs;
     return afterStart && beforeEnd;
   });
-  return subset.length ? subset : candles;
+  if (subset.length) return subset;
+  return candles;
 }
 
 function aggregateCandles(candles, target) {
@@ -116,14 +161,33 @@ function finaliseBucket(bucket) {
   };
 }
 
-export function getOfflineCandles({ symbol, interval = '1m', start, end, aggregate }) {
-  const key = (symbol || '').toUpperCase();
-  const base = BASE_SERIES[key];
-  if (!base) {
-    return null;
+function resolveSeries(symbol, startMs, endMs, interval) {
+  if (!symbol) return { series: [], synthetic: true };
+  const upper = symbol.toUpperCase();
+  const existing = BASE_SAMPLES[upper];
+  if (existing && coversRange(existing, startMs, endMs)) {
+    return { series: existing, synthetic: !STATIC_KEYS.has(upper) };
   }
+  const generated = generateSyntheticSeries(upper, startMs, endMs, interval);
+  BASE_SAMPLES[upper] = generated;
+  STATIC_KEYS.delete(upper);
+  return { series: generated, synthetic: true };
+}
+
+function coversRange(series, startMs, endMs) {
+  if (!series?.length) return false;
+  const first = series[0].t;
+  const last = series[series.length - 1].t;
+  const afterStart = startMs == null || startMs >= first;
+  const beforeEnd = endMs == null || endMs <= last;
+  return afterStart && beforeEnd;
+}
+
+export function getOfflineCandles({ symbol, interval = '1m', start, end, aggregate }) {
+  const key = (symbol || 'SPY').toUpperCase();
   const startMs = toMs(start);
   const endMs = toMs(end);
+  const { series: base, synthetic } = resolveSeries(key, startMs, endMs, interval);
   const filtered = filterRange(base, startMs, endMs);
   const aggregated = aggregateCandles(filtered, aggregate || interval);
   return {
@@ -132,13 +196,14 @@ export function getOfflineCandles({ symbol, interval = '1m', start, end, aggrega
     aggregate: aggregate || interval,
     candles: aggregated,
     offline: true,
-    from: 'static-sample',
-    rangeStart: filtered[0]?.t ?? SAMPLE_TIMESTAMPS[0],
-    rangeEnd: filtered.length ? last(filtered).t : last(SAMPLE_TIMESTAMPS),
+    from: synthetic ? 'synthetic-sample' : 'static-sample',
+    rangeStart: filtered[0]?.t ?? aggregated[0]?.t ?? Date.now() - YEAR_MS,
+    rangeEnd: filtered.length ? filtered[filtered.length - 1].t : aggregated.length ? aggregated[aggregated.length - 1].t : Date.now(),
     updated: Date.now() - YEAR_MS
   };
 }
 
-export function hasOfflineSupport(symbol) {
-  return Boolean(BASE_SERIES[(symbol || '').toUpperCase()]);
+export function hasOfflineSupport() {
+  return true;
 }
+
