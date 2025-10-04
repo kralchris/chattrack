@@ -136,6 +136,20 @@ const executeAction = (action, context, timestamp, meta = {}) => {
       context.notes.push(`Rule applied: ${JSON.stringify(action.payload)}`);
       break;
     }
+    case 'liquidate': {
+      const symbols = Object.keys(positions);
+      if (!symbols.length) return;
+      symbols.forEach((symbol) => {
+        if (!positions[symbol]) return;
+        executeAction(
+          { type: 'sell', payload: { symbol, all: true } },
+          context,
+          timestamp,
+          { note: meta.note || 'Liquidation' }
+        );
+      });
+      return;
+    }
     default:
       break;
   }
@@ -273,6 +287,7 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
   const positionsSeries = [];
   const executed = new Set();
   const schedules = [];
+  const lastTimestamp = timeline[timeline.length - 1];
   let lastDateKey = null;
 
   context.actions.forEach((action, index) => {
@@ -305,6 +320,7 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
       if (action.type === 'schedule') return;
       if (executed.has(index)) return;
       if (action.ts && action.ts > timestamp) return;
+      if (action.at === 'end' && timestamp !== lastTimestamp) return;
       executeAction(action, context, timestamp);
       executed.add(index);
     });

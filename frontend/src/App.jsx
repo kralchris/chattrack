@@ -217,48 +217,71 @@ export default function App() {
       relativeHandled = true;
     }
 
-    switch (action.type) {
-      case 'set_capital': {
-        const value = action.payload.value || 0;
-        setCapital(value);
-        addMessage({ role: 'assistant', content: `Starting capital set to $${value.toLocaleString()}.` });
-        break;
+    const queue = [action];
+
+    const processAction = async (current) => {
+      switch (current.type) {
+        case 'set_capital': {
+          const value = current.payload.value || 0;
+          setCapital(value);
+          addMessage({ role: 'assistant', content: `Starting capital set to $${value.toLocaleString()}.` });
+          break;
+        }
+        case 'set_dates_relative': {
+          if (relativeHandled) break;
+          const { amount, unit } = current.payload;
+          const range = computeRelativeRange(amount, unit);
+          setDateRange(range);
+          await loadSymbol(activeSymbol, range);
+          addMessage({ role: 'assistant', content: `Backtesting the last ${formatHorizon(amount, unit)} for ${activeSymbol}.` });
+          break;
+        }
+        case 'set_dates': {
+          const range = {
+            start: `${current.payload.start}T00:00:00Z`,
+            end: `${current.payload.end}T23:59:59Z`,
+            interval: current.payload.interval || DEFAULT_INTERVAL
+          };
+          setDateRange(range);
+          await loadSymbol(activeSymbol, range);
+          addMessage({
+            role: 'assistant',
+            content: `Backtesting ${activeSymbol} from ${current.payload.start} to ${current.payload.end}.`
+          });
+          break;
+        }
+        case 'buy':
+        case 'sell':
+        case 'allocate':
+        case 'schedule':
+        case 'rule':
+        case 'liquidate': {
+          const symbol = current.payload.symbol || (current.type === 'liquidate' ? null : activeSymbol);
+          if (symbol) {
+            await ensureSymbolLoaded(symbol);
+          }
+          const storedAction = { type: current.type, payload: current.payload, ts: null };
+          if (current.payload?.when) {
+            storedAction.at = current.payload.when;
+          }
+          appendAction(storedAction);
+          addMessage({ role: 'assistant', content: describeAction(current) });
+          break;
+        }
+        case 'noop':
+        default:
+          addMessage({ role: 'assistant', content: `Echoing back: ${current.payload.message}.` });
+          break;
       }
-      case 'set_dates_relative': {
-        if (relativeHandled) break;
-        const { amount, unit } = action.payload;
-        const range = computeRelativeRange(amount, unit);
-        setDateRange(range);
-        await loadSymbol(activeSymbol, range);
-        addMessage({ role: 'assistant', content: `Backtesting the last ${formatHorizon(amount, unit)} for ${activeSymbol}.` });
-        break;
+    };
+
+    while (queue.length) {
+      const current = queue.shift();
+      // eslint-disable-next-line no-await-in-loop
+      await processAction(current);
+      if (current?.followUps?.length) {
+        queue.push(...current.followUps);
       }
-      case 'set_dates': {
-        const range = {
-          start: `${action.payload.start}T00:00:00Z`,
-          end: `${action.payload.end}T23:59:59Z`,
-          interval: action.payload.interval || DEFAULT_INTERVAL
-        };
-        setDateRange(range);
-        await loadSymbol(activeSymbol, range);
-        addMessage({ role: 'assistant', content: `Backtesting ${activeSymbol} from ${action.payload.start} to ${action.payload.end}.` });
-        break;
-      }
-      case 'buy':
-      case 'sell':
-      case 'allocate':
-      case 'schedule':
-      case 'rule': {
-        const symbol = action.payload.symbol || activeSymbol;
-        await ensureSymbolLoaded(symbol);
-        appendAction({ ...action, ts: null });
-        addMessage({ role: 'assistant', content: describeAction(action) });
-        break;
-      }
-      case 'noop':
-      default:
-        addMessage({ role: 'assistant', content: `Echoing back: ${action.payload.message}.` });
-        break;
     }
   };
 
@@ -338,6 +361,11 @@ function describeAction(action) {
       return `Scheduled ${action.payload.action} for ${action.payload.symbol ?? 'portfolio'} ${action.payload.cadence}.`;
     case 'rule':
       return `Applying rule: ${JSON.stringify(action.payload)}.`;
+    case 'liquidate': {
+      return action.payload.when === 'end'
+        ? 'Queued liquidation at the end of the backtest.'
+        : 'Liquidating all positions.';
+    }
     default:
       return 'Instruction acknowledged.';
   }

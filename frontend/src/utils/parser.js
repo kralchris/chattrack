@@ -222,7 +222,8 @@ const extractSchedule = (message, lower) => {
     }
   }
 
-  const allFlag = lower.includes('sell all') || lower.includes('sell everything');
+  const allFlag =
+    action === 'sell' && (lower.includes('sell all') || lower.includes('sell everything') || lower.includes('liquidate'));
 
   const payload = {
     action,
@@ -256,10 +257,33 @@ const extractSchedule = (message, lower) => {
     }
   }
 
-  return {
+  const followUps = [];
+  const wantsLiquidate =
+    lower.includes('sell all stocks') ||
+    lower.includes('sell all holdings') ||
+    lower.includes('sell all positions') ||
+    lower.includes('sell everything') ||
+    lower.includes('liquidate');
+
+  if (wantsLiquidate) {
+    followUps.push({
+      type: 'liquidate',
+      payload: {
+        when: lower.includes('today') || lower.includes('now') ? 'end' : 'immediate'
+      }
+    });
+  }
+
+  const result = {
     type: 'schedule',
     payload
   };
+
+  if (followUps.length) {
+    result.followUps = followUps;
+  }
+
+  return result;
 };
 
 export function parseMessage(text) {
@@ -271,11 +295,23 @@ export function parseMessage(text) {
     return scheduleParsed;
   }
 
-  const capitalMatch = lower.match(/(start with|set capital|capital)\s+([$\d,\.]+)/);
+  const capitalMatch = message.match(/(?:start with|set capital|capital|bankroll)[^\d$]*([$]?\d[\d,]*(?:\.\d+)?)/i);
   if (capitalMatch) {
     return {
       type: 'set_capital',
-      payload: { value: toNumber(capitalMatch[2]) }
+      payload: { value: toNumber(capitalMatch[1]) }
+    };
+  }
+
+  const liquidateMatch = lower.match(
+    /(liquidate(?: all)?(?: positions| holdings| everything| portfolio)?)|(sell all (?:stocks|positions|holdings|everything))/
+  );
+  if (liquidateMatch) {
+    return {
+      type: 'liquidate',
+      payload: {
+        when: lower.includes('today') || lower.includes('now') ? 'end' : 'immediate'
+      }
     };
   }
 
