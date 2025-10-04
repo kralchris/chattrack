@@ -11,7 +11,7 @@ const withQuery = (url, params) => {
   return `${url}?${q.toString()}`;
 };
 
-export async function getCandles({ symbol, interval = '1m', start, end, aggregate }) {
+export async function getCandles({ symbol, interval = '1h', start, end, aggregate }) {
   try {
     const response = await fetch(withQuery(`${API_BASE}/api/candles`, { symbol, interval, start, end, aggregate }));
     if (!response.ok) {

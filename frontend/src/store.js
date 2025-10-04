@@ -1,18 +1,23 @@
 import { create } from 'zustand';
 
-export const useChatStore = create((set, get) => ({
-  messages: [
-    { role: 'system', content: 'Welcome to ChatTrack. Ask me to allocate capital, trade symbols, or set a date range.' },
-    {
-      role: 'assistant',
-      content: 'Try typing instructions like "Start with 100k" or "Buy 10 SPY" below to kick off a backtest.'
-    }
-  ],
+export const DEFAULT_SYMBOL = 'SPY';
+export const DEFAULT_CAPITAL = 100000;
+
+const createInitialMessages = () => [
+  { role: 'system', content: 'Welcome to ChatTrack. Ask me to allocate capital, trade symbols, or set a date range.' },
+  {
+    role: 'assistant',
+    content: 'Try typing instructions like "Start with 100k" or "Buy 10 SPY" below to kick off a backtest.'
+  }
+];
+
+const createInitialState = () => ({
+  messages: createInitialMessages(),
   actions: [],
-  capital: 100000,
+  capital: DEFAULT_CAPITAL,
   dateRange: null,
   candles: {},
-  activeSymbol: 'SPY',
+  activeSymbol: DEFAULT_SYMBOL,
   equitySeries: [],
   drawdownSeries: [],
   metrics: null,
@@ -22,6 +27,10 @@ export const useChatStore = create((set, get) => ({
   tradesCount: 0,
   notes: [],
   trades: [],
+});
+
+export const useChatStore = create((set, get) => ({
+  ...createInitialState(),
   setOffline: (offline) => set({ offline }),
   addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
   setCapital: (capital) => set({ capital }),
@@ -30,8 +39,8 @@ export const useChatStore = create((set, get) => ({
     set((state) => ({
       candles: {
         ...state.candles,
-        [symbol]: data
-      }
+        [symbol]: data,
+      },
     })),
   setEquity: (equitySeries, drawdownSeries) => set({ equitySeries, drawdownSeries }),
   setMetrics: (metrics) => set({ metrics }),
@@ -41,9 +50,26 @@ export const useChatStore = create((set, get) => ({
   toggleBenchmark: () => set((state) => ({ comparingBenchmark: !state.comparingBenchmark })),
   setTradesCount: (count) => set({ tradesCount: count }),
   appendAction: (action) => set((state) => ({ actions: [...state.actions, action] })),
-  resetActions: () => set({ actions: [] }),
   setActiveSymbol: (symbol) => set({ activeSymbol: symbol }),
   clearMessages: () => set({ messages: [] }),
+  resetForPrompt: (range) =>
+    set(() => ({
+      actions: [],
+      capital: DEFAULT_CAPITAL,
+      equitySeries: [],
+      drawdownSeries: [],
+      metrics: null,
+      trades: [],
+      tradesCount: 0,
+      notes: [],
+      benchmark: null,
+      comparingBenchmark: false,
+      candles: {},
+      offline: false,
+      activeSymbol: DEFAULT_SYMBOL,
+      dateRange: range ?? null,
+    })),
+  resetAll: () => set(createInitialState()),
   loadState: (partial) => set(partial),
-  getState: () => get()
+  getState: () => get(),
 }));

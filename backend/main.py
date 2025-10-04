@@ -36,7 +36,7 @@ DATA_DIR = Path(__file__).parent / "data"
 class CandleResponse(BaseModel):
     symbol: str
     interval: str
-    aggregate: str = Field(default="1m")
+    aggregate: str = Field(default="1h")
     candles: list[dict[str, Any]]
     offline: bool = False
 
@@ -71,7 +71,7 @@ class MetricsResponse(BaseModel):
 async def preload_latest_data() -> None:
     loop = asyncio.get_running_loop()
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=7)
+    start = end - timedelta(days=365)
     symbols = ["SPY", "AAPL", "MSFT"]
     tasks = []
     for symbol in symbols:
@@ -86,7 +86,7 @@ async def preload_latest_data() -> None:
 
 def _preload_symbol(symbol: str, start: datetime, end: datetime) -> None:
     try:
-        fetch_candles(symbol=symbol, interval="1m", start=start.isoformat(), end=end.isoformat())
+        fetch_candles(symbol=symbol, interval="1h", start=start.isoformat(), end=end.isoformat())
     except Exception as exc:  # noqa: BLE001
         logger.info("preload failed for %s: %s", symbol, exc)
 
@@ -99,17 +99,17 @@ def health() -> dict[str, bool]:
 @app.get("/api/candles", response_model=CandleResponse)
 def get_candles(
     symbol: str = Query(..., description="Ticker symbol"),
-    interval: str = Query("1m", regex=r"^\d+[mdwk]$|^1m$"),
+    interval: str = Query("1h", regex=r"^\d+[mhdwk]$"),
     start: str | None = Query(None, description="ISO start date/time"),
     end: str | None = Query(None, description="ISO end date/time"),
-    aggregate: str | None = Query(None, regex=r"^(1m|5m|15m)$"),
+    aggregate: str | None = Query(None, regex=r"^(1m|5m|15m|1h|4h)$"),
 ) -> CandleResponse:
     df, offline = fetch_candles(symbol=symbol, interval=interval, start=start, end=end, aggregate=aggregate)
     candles = _df_to_candles(df)
     return CandleResponse(
         symbol=symbol.upper(),
         interval=interval,
-        aggregate=aggregate or "1m",
+        aggregate=aggregate or interval,
         candles=candles,
         offline=offline,
     )
@@ -163,7 +163,7 @@ def fetch_candles(
     if start:
         start_dt = dateparser.isoparse(start)
     else:
-        start_dt = end_dt - timedelta(days=2)
+        start_dt = end_dt - timedelta(days=3650)
 
     start_key = start_dt.strftime("%Y%m%d%H%M")
     end_key = end_dt.strftime("%Y%m%d%H%M")

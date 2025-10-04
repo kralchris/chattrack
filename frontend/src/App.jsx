@@ -4,19 +4,26 @@ import ChartPanel from './components/ChartPanel.jsx';
 import MetricsCards from './components/MetricsCards.jsx';
 import AllocRibbon from './components/AllocRibbon.jsx';
 import TradeLog from './components/TradeLog.jsx';
-import { useChatStore } from './store.js';
+import { useChatStore, DEFAULT_SYMBOL } from './store.js';
 import { parseMessage } from './utils/parser.js';
 import { getCandles, postMetrics } from './utils/api.js';
 import { computePerformanceMetrics } from './utils/metrics.js';
 
-const DEFAULT_SYMBOL = 'SPY';
-const DEFAULT_INTERVAL = '1m';
+const DEFAULT_INTERVAL = '1h';
+const DEFAULT_LOOKBACK_YEARS = 10;
 
 const isoString = (date) => date.toISOString();
 
 const formatHorizon = (amount, unit) => {
   const base = unit.toLowerCase().replace(/s$/, '');
   return `${amount} ${base}${amount > 1 ? 's' : ''}`;
+};
+
+const computeDefaultRange = () => {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCFullYear(start.getUTCFullYear() - DEFAULT_LOOKBACK_YEARS);
+  return { start: isoString(start), end: isoString(end), interval: DEFAULT_INTERVAL };
 };
 
 const computeRelativeRange = (amount, unit) => {
@@ -67,7 +74,9 @@ export default function App() {
     setActiveSymbol,
     comparingBenchmark,
     toggleBenchmark,
-    offline
+    offline,
+    resetForPrompt,
+    resetAll
   } = useChatStore();
 
   const candlesBySymbol = useMemo(() => {
@@ -117,21 +126,26 @@ export default function App() {
   }, [candlesBySymbol, actions, capital, setBenchmark]);
 
   useEffect(() => {
-    const end = new Date();
-    const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
-    const range = { start: isoString(start), end: isoString(end), interval: DEFAULT_INTERVAL };
-    if (!dateRange) {
-      setDateRange(range);
-    }
+    const range = computeDefaultRange();
+    setDateRange(range);
     loadSymbol(DEFAULT_SYMBOL, range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadSymbol = async (symbol, range = dateRange || {}) => {
+  const loadSymbol = async (symbol, range = dateRange || computeDefaultRange()) => {
     setIsLoading(true);
     const wasOffline = offline;
     try {
-      const response = await getCandles({ symbol, interval: range.interval || DEFAULT_INTERVAL, start: range.start, end: range.end });
+      const effectiveRange = {
+        ...computeDefaultRange(),
+        ...range
+      };
+      const response = await getCandles({
+        symbol,
+        interval: effectiveRange.interval || DEFAULT_INTERVAL,
+        start: effectiveRange.start,
+        end: effectiveRange.end
+      });
       setCandles(symbol, response);
       const offlineNow = Boolean(response.offline);
       setOffline(offlineNow);
@@ -147,7 +161,7 @@ export default function App() {
           const latest = new Date(last.t).toLocaleString();
           addMessage({
             role: 'assistant',
-            content: `Streaming live Yahoo Finance data for ${symbol.toUpperCase()}. Latest 1m candle captured at ${latest}.`
+            content: `Streaming live Yahoo Finance data for ${symbol.toUpperCase()}. Latest 1h candle captured at ${latest}.`
           });
         }
         liveDataRef.current = true;
@@ -169,10 +183,29 @@ export default function App() {
     await loadSymbol(symbol, dateRange);
   };
 
+  const handleRestore = async () => {
+    const baseRange = computeDefaultRange();
+    resetAll();
+    setDateRange(baseRange);
+    liveDataRef.current = false;
+    await loadSymbol(DEFAULT_SYMBOL, baseRange);
+    addMessage({ role: 'assistant', content: 'Workspace restored to default settings.' });
+  };
+
   const handleSend = async (text) => {
-    addMessage({ role: 'user', content: text });
-    const action = parseMessage(text);
-    const relativeInstruction = extractRelativeRange(text);
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const baseRange = computeDefaultRange();
+    resetForPrompt(baseRange);
+    setDateRange(baseRange);
+    liveDataRef.current = false;
+
+    addMessage({ role: 'user', content: trimmed });
+    await loadSymbol(DEFAULT_SYMBOL, baseRange);
+
+    const action = parseMessage(trimmed);
+    const relativeInstruction = extractRelativeRange(trimmed);
     let relativeHandled = false;
 
     if (relativeInstruction && action.type !== 'set_dates') {
@@ -202,8 +235,8 @@ export default function App() {
       }
       case 'set_dates': {
         const range = {
-          start: `${action.payload.start}T09:30:00Z`,
-          end: `${action.payload.end}T21:00:00Z`,
+          start: `${action.payload.start}T00:00:00Z`,
+          end: `${action.payload.end}T23:59:59Z`,
           interval: action.payload.interval || DEFAULT_INTERVAL
         };
         setDateRange(range);
@@ -240,14 +273,25 @@ export default function App() {
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-surface/60 px-6 py-4 shadow-lg shadow-black/40">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-white">ChatTrack</h1>
-            <p className="text-sm text-white/60">Chat-driven backtests with minute-level precision.</p>
+            <p className="text-sm text-white/60">Chat-driven backtests with decade-long hourly history.</p>
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => loadSymbol(DEFAULT_SYMBOL, dateRange)}
+              onClick={() => {
+                const baseRange = computeDefaultRange();
+                setDateRange(baseRange);
+                liveDataRef.current = false;
+                loadSymbol(DEFAULT_SYMBOL, baseRange);
+              }}
               className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-accentMuted"
             >
-              Load SPY (1m, last 2 days)
+              Reload SPY (1h, 10y)
+            </button>
+            <button
+              onClick={handleRestore}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:border-accent hover:text-accent"
+            >
+              Restore
             </button>
             {isLoading ? <span className="text-xs text-white/60">Loading...</span> : null}
           </div>

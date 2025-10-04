@@ -323,7 +323,7 @@ export function parseMessage(text) {
       payload: {
         start: dateRangeMatch[2],
         end: dateRangeMatch[3],
-        interval: dateRangeMatch[4] || '1m'
+        interval: dateRangeMatch[4] || '1h'
       }
     };
   }

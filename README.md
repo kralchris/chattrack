@@ -1,6 +1,6 @@
 # ChatTrack
 
-ChatTrack is a chat-driven trading playground. Type allocation instructions, backtest them against 1-minute candles, and visualize equity, drawdown, and core performance metrics in real time.
+ChatTrack is a chat-driven trading playground. Type allocation instructions, backtest them against decade-long hourly candles, and visualize equity, trades, and core performance metrics in real time.
 
 ## Project Structure
 
@@ -28,10 +28,10 @@ uvicorn backend.main:app --reload --port 8000
 
 The FastAPI service exposes:
 - `GET /api/health`
-- `GET /api/candles?symbol=SPY&interval=1m&start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /api/candles?symbol=SPY&interval=1h&start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `POST /api/metrics`
 
-Minute candles are cached to Parquet in `backend/data/cache/`. If Yahoo Finance is unavailable, sample CSVs (`spy_sample_1m.csv`, `aapl_sample_1m.csv`) are used as a fallback and an offline banner is shown in the UI.
+Hourly candles are cached to Parquet in `backend/data/cache/`. If Yahoo Finance is unavailable, interval-matched sample CSVs (for example `spy_sample_1h.csv`) are used as a fallback and an offline banner is shown in the UI.
 
 ### Frontend
 
@@ -46,7 +46,7 @@ falls back to bundled sample candles so you can still experiment with chat instr
 
 ## Usage Tips
 
-1. Click **“Load SPY (1m, last 2 days)”** to fetch recent minute candles (or use the offline sample if the API is down).
+1. Click **“Reload SPY (1h, 10y)”** to pull the maximum hourly history (or use the offline sample if the API is down).
 2. Try chat prompts like:
    - `Start with 100k`
    - `Buy 10 SPY`
@@ -54,7 +54,7 @@ falls back to bundled sample candles so you can still experiment with chat instr
    - `Backtest 2024-10-01 to 2024-10-03`
 3. Toggle **“Compare vs SPY”** to overlay a buy-and-hold benchmark.
 
-Type your instructions into the input at the bottom of the chat panel. The backtest runs in a web worker to keep the UI responsive. Equity curve and drawdown charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more (or the browser computes them if the backend is offline).
+Type your instructions into the input at the bottom of the chat panel. The backtest runs in a web worker to keep the UI responsive. Equity and trade marker charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more (or the browser computes them if the backend is offline).
 
 ## Run Scripts
 

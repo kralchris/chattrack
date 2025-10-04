@@ -19,7 +19,7 @@ export default function TradeLog() {
     () =>
       (trades || [])
         .filter((trade) => trade.side === 'buy' || trade.side === 'sell' || trade.side === 'roll')
-        .slice(-100)
+        .slice()
         .reverse(),
     [trades]
   );
@@ -29,7 +29,7 @@ export default function TradeLog() {
       <div className="flex items-center justify-between pb-3">
         <div>
           <h3 className="text-base font-semibold text-white">Trade Blotter</h3>
-          <p className="text-xs text-white/50">Recent executions including fees, spread and overnight costs.</p>
+          <p className="text-xs text-white/50">All executions including fees, spread and overnight costs.</p>
         </div>
       </div>
       {displayTrades.length ? (

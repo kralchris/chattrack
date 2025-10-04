@@ -6,7 +6,7 @@ export default function AllocRibbon({ onToggleBenchmark }) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface/60 px-4 py-3 shadow-inner shadow-black/30">
       <span className="rounded-full bg-accent/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-accent">
-        {activeSymbol} Live Preview
+        {activeSymbol} Hourly Preview
       </span>
       <button
         onClick={onToggleBenchmark}
