@@ -43,9 +43,176 @@ const detectCadence = (text) => {
   return null;
 };
 
+const extractSchedule = (message, lower) => {
+  const cadence = detectCadence(lower);
+  if (!cadence) return null;
+
+  const actionMatch = lower.match(/\b(buy|sell|invest)\b/);
+  if (!actionMatch) return null;
+
+  const actionWord = actionMatch[1];
+  const action = actionWord === 'sell' ? 'sell' : 'buy';
+
+  const tokens = lower
+    .replace(/[,]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const actionIndex = tokens.findIndex((token) => ['buy', 'sell', 'invest'].includes(token));
+  if (actionIndex === -1) return null;
+
+  let symbol = null;
+  let qty;
+
+  const filler = new Set([
+    'of',
+    'in',
+    'into',
+    'to',
+    'the',
+    'a',
+    'an',
+    'one',
+    'some',
+    'more',
+    'additional',
+    'stock',
+    'stocks',
+    'share',
+    'shares',
+    'unit',
+    'units',
+    'each',
+    'every',
+    'per',
+    'for',
+    'past',
+    'over',
+    'last',
+    'this',
+    'that',
+    'daily',
+    'day',
+    'days',
+    'weekly',
+    'week',
+    'weeks',
+    'monthly',
+    'month',
+    'months',
+    'year',
+    'years',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'today',
+    'tomorrow',
+    'ago',
+    'usd',
+    'dollars',
+    '$'
+  ]);
+
+  const isFiller = (token) => filler.has(token);
+
+  for (let i = actionIndex + 1; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (['every', 'each', 'per'].includes(token)) break;
+    if (isFiller(token)) continue;
+
+    if (/^\d+(?:\.\d+)?$/.test(token)) {
+      const next = tokens[i + 1];
+      const nextResolved = next && !isFiller(next) ? resolveSymbol(next) : null;
+      const following = tokens[i + 1];
+      const followingIsShare = following && ['share', 'shares', 'unit', 'units'].includes(following);
+      if (followingIsShare) {
+        qty = Number(token);
+        i += 1;
+        continue;
+      }
+      if (nextResolved) {
+        qty = Number(token);
+        symbol = symbol || nextResolved;
+        i += 1;
+        continue;
+      }
+      continue;
+    }
+
+    const resolved = resolveSymbol(token);
+    if (resolved) {
+      symbol = resolved;
+      continue;
+    }
+  }
+
+  if (!symbol) {
+    const fallbackMatch = lower.match(/([a-z]{2,15})\s+(?:stock|stocks|shares?)/);
+    if (fallbackMatch) {
+      symbol = resolveSymbol(fallbackMatch[1]);
+    }
+  }
+
+  if (!symbol) {
+    const anyToken = tokens
+      .map((token) => (isFiller(token) ? null : resolveSymbol(token)))
+      .find((val) => val);
+    if (anyToken) symbol = anyToken;
+  }
+
+  if (!symbol) return null;
+
+  const currencyPatterns = [
+    /(\d+(?:\.\d+)?)\s*(?:usd|dollars|\$)/,
+    /\$(\d+(?:\.\d+)?)/
+  ];
+  let notional;
+  for (const pattern of currencyPatterns) {
+    const match = lower.match(pattern);
+    if (match) {
+      const rawAmount = match[1] ?? match[2];
+      if (rawAmount != null) {
+        notional = toNumber(String(rawAmount));
+        break;
+      }
+    }
+  }
+
+  const allFlag = lower.includes('sell all') || lower.includes('sell everything');
+
+  const payload = {
+    action,
+    symbol,
+    cadence,
+    qty: qty ? Number(qty) : undefined,
+    notional: notional || undefined,
+    all: allFlag || undefined
+  };
+
+  if (payload.action === 'buy' && !payload.qty && !payload.notional && !payload.all) {
+    payload.qty = 1;
+  }
+
+  if (payload.action === 'sell' && !payload.qty && !payload.notional && !payload.all) {
+    payload.all = true;
+  }
+
+  return {
+    type: 'schedule',
+    payload
+  };
+};
+
 export function parseMessage(text) {
   const message = text.trim();
   const lower = message.toLowerCase();
+
+  const scheduleParsed = extractSchedule(message, lower);
+  if (scheduleParsed) {
+    return scheduleParsed;
+  }
 
   const capitalMatch = lower.match(/(start with|set capital|capital)\s+([$\d,\.]+)/);
   if (capitalMatch) {
@@ -91,66 +258,11 @@ export function parseMessage(text) {
     };
   }
 
-  const scheduleMatch = lower.match(/\b(buy|sell)\s+([a-z]{1,10})\s+every\s+([a-z]+)/);
-  if (scheduleMatch && dayMap[scheduleMatch[3]]) {
-    const symbol = resolveSymbol(scheduleMatch[2]);
-    if (!symbol) {
-      return { type: 'noop', payload: { message } };
-    }
-    return {
-      type: 'schedule',
-      payload: {
-        action: scheduleMatch[1],
-        symbol,
-        cadence: dayMap[scheduleMatch[3]]
-      }
-    };
-  }
-
   if (lower.includes('rebalance monthly')) {
     return {
       type: 'schedule',
       payload: { action: 'rebalance', cadence: 'monthly' }
     };
-  }
-
-  const dcaMatch = lower.match(
-    /(buy|buying)\s+(?:a|an|one|\d+)?\s*([a-z]{2,15})\s+(?:stock|shares?).*?(\d+(?:\.\d+)?)\s*(?:usd|dollars|\$).*?(each|every)\s+(monday|tuesday|wednesday|thursday|friday|month|monthly|week|weekly)/
-  );
-  if (dcaMatch) {
-    const symbol = resolveSymbol(dcaMatch[2]);
-    const cadence = dayMap[dcaMatch[5]];
-    if (symbol && cadence) {
-      return {
-        type: 'schedule',
-        payload: {
-          action: 'buy',
-          symbol,
-          cadence,
-          notional: Number(dcaMatch[3])
-        }
-      };
-    }
-  }
-
-  const cadence = detectCadence(lower);
-  if (cadence) {
-    const genericMatch = lower.match(/\b(buy|sell)\s+([a-z]{1,15})/);
-    if (genericMatch) {
-      const symbol = resolveSymbol(genericMatch[2]);
-      if (symbol) {
-        const notionalMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:usd|dollars|\$)/);
-        return {
-          type: 'schedule',
-          payload: {
-            action: genericMatch[1],
-            symbol,
-            cadence,
-            notional: notionalMatch ? Number(notionalMatch[1]) : undefined
-          }
-        };
-      }
-    }
   }
 
   const dateRangeMatch = lower.match(

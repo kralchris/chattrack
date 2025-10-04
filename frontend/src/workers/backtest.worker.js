@@ -144,15 +144,26 @@ const computeEquitySeries = ({ timeline, perSymbol }, context) => {
 
     schedules.forEach((entry) => {
       if (shouldTriggerSchedule(entry.action, timestamp, entry.state)) {
+        const scheduledPayload = {
+          symbol: entry.action.payload.symbol,
+          qty: entry.action.payload.qty,
+          notional: entry.action.payload.notional,
+          all: entry.action.payload.all,
+          weight: entry.action.payload.weight
+        };
+
+        if (
+          entry.action.payload.action === 'buy' &&
+          scheduledPayload.qty == null &&
+          scheduledPayload.notional == null &&
+          !scheduledPayload.all
+        ) {
+          scheduledPayload.qty = 1;
+        }
+
         const scheduled = {
           type: entry.action.payload.action,
-          payload: {
-            symbol: entry.action.payload.symbol,
-            qty: entry.action.payload.qty,
-            notional: entry.action.payload.notional,
-            all: entry.action.payload.all,
-            weight: entry.action.payload.weight
-          }
+          payload: scheduledPayload
         };
         executeAction(scheduled, context, timestamp);
       }

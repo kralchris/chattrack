@@ -55,7 +55,6 @@ falls back to bundled sample candles so you can still experiment with chat instr
 3. Toggle **“Compare vs SPY”** to overlay a buy-and-hold benchmark.
 
 Type your instructions into the input at the bottom of the chat panel. The backtest runs in a web worker to keep the UI responsive. Equity curve and drawdown charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more (or the browser computes them if the backend is offline).
-The backtest runs in a web worker to keep the UI responsive. Equity curve and drawdown charts update with every instruction, while the backend computes CAGR, Sharpe, total return, and more.
 
 ## Run Scripts
 
